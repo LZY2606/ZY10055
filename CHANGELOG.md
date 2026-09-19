@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 <!-- next-header -->
 ## [Unreleased] - ReleaseDate
 
+### Fixed
+
+- Correctly map byte ranges when a source contains two or more consecutive empty CRLF lines
+
+  Visible symptom: on Windows-style files that happened to start with (or contain) a run of
+  empty `\r\n` lines, annotations on any later line were shifted one column to the right or
+  landed on the wrong visual line, and non-ASCII content after such a run could be sliced at
+  a non-char boundary. Removing any one of the empty lines, or converting the file to LF,
+  masked the problem, which is why it mostly showed up on Windows checkouts.
+
+  Root cause chain: the line iterator in the renderer's source map special-cased a remaining
+  input starting with `\r\n\r\n` and reported the first empty line as terminated by a 1-byte
+  `LF` while still consuming both bytes of the `\r\n`. The source map accumulates each line's
+  byte offset from the reported line-ending sizes, so every subsequent line's `start_byte` was
+  one byte too low, and every downstream span-to-location conversion (labels, multiline
+  annotations, suggestions, styled spans) inherited the shift.
+
+  Why existing coverage missed it: the CRLF tests only ever exercised a single `\r\n` line at
+  a time (including lone empty CRLF lines), which the special case left untouched; the
+  mis-counting only triggered on two consecutive empty CRLF lines, a shape no test produced.
+
 ## [0.12.16] - 2026-05-06
 
 ### Fixed

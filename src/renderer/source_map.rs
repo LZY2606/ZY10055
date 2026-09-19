@@ -698,11 +698,7 @@ impl<'a> Iterator for CursorLines<'a> {
             self.0
                 .find('\n')
                 .map(|x| {
-                    let ret = if 0 < x
-                        && !(x == 1
-                            && self.0.as_bytes()[0] == b'\r'
-                            && self.0.as_bytes().get(2..4) == Some(b"\r\n"))
-                    {
+                    let ret = if 0 < x {
                         if self.0.as_bytes()[x - 1] == b'\r' {
                             (&self.0[..x - 1], EndLine::Crlf)
                         } else {
@@ -805,5 +801,102 @@ pub(crate) fn as_substr<'a>(
         } else {
             None
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn line_ranges(source: &str) -> Vec<(usize, usize, usize)> {
+        SourceMap::new(source, 1)
+            .lines
+            .iter()
+            .map(|l| (l.start_byte, l.end_byte, l.end_line_size))
+            .collect()
+    }
+
+    #[test]
+    fn crlf_empty_lines_at_start_byte_ranges() {
+        // Two consecutive empty CRLF lines at the start of the source, then
+        // content. Every line ending is 2 bytes and must be accounted for.
+        let source = "\r\n\r\nabc\r\n";
+        assert_eq!(
+            line_ranges(source),
+            vec![(0, 2, 2), (2, 4, 2), (4, 9, 2)],
+            "line byte ranges must add up to the raw CRLF bytes"
+        );
+
+        let sm = SourceMap::new(source, 1);
+        let (lo, hi) = sm.span_to_locations(4..7);
+        assert_eq!((lo.line, lo.char, lo.byte), (3, 0, 4));
+        assert_eq!((hi.line, hi.char, hi.byte), (3, 3, 7));
+    }
+
+    #[test]
+    fn crlf_empty_lines_in_middle_byte_ranges() {
+        let source = "abc\r\n\r\n\r\ndef";
+        assert_eq!(
+            line_ranges(source),
+            vec![(0, 5, 2), (5, 7, 2), (7, 9, 2), (9, 12, 0)]
+        );
+
+        let sm = SourceMap::new(source, 1);
+        let (lo, hi) = sm.span_to_locations(9..12);
+        assert_eq!((lo.line, lo.char, lo.byte), (4, 0, 9));
+        assert_eq!((hi.line, hi.char, hi.byte), (4, 3, 12));
+    }
+
+    #[test]
+    fn crlf_empty_lines_at_end_byte_ranges() {
+        let source = "abc\r\n\r\n\r\n";
+        assert_eq!(line_ranges(source), vec![(0, 5, 2), (5, 7, 2), (7, 9, 2)]);
+
+        // A span on the last (empty) line must resolve to that line's first
+        // column, not leak into the previous line's byte range.
+        let sm = SourceMap::new(source, 1);
+        let (lo, hi) = sm.span_to_locations(7..7);
+        assert_eq!((lo.line, lo.char, lo.byte), (3, 0, 7));
+        assert_eq!((hi.line, hi.char, hi.byte), (3, 0, 7));
+    }
+
+    #[test]
+    fn crlf_empty_lines_before_non_ascii_line() {
+        // `α` is two bytes wide in UTF-8; a byte range that is off by one
+        // would land in the middle of a char boundary.
+        let source = "\r\n\r\nαβγ\r\n";
+        assert_eq!(line_ranges(source), vec![(0, 2, 2), (2, 4, 2), (4, 12, 2)]);
+
+        let sm = SourceMap::new(source, 1);
+        let (lo, hi) = sm.span_to_locations(4..8);
+        assert_eq!((lo.line, lo.char, lo.byte), (3, 0, 4));
+        assert_eq!((hi.line, hi.char, hi.byte), (3, 2, 8));
+    }
+
+    #[test]
+    fn crlf_style_of_one_snippet_does_not_leak_into_next() {
+        // Each snippet gets its own `SourceMap`; a CRLF-heavy source must not
+        // shift the byte ranges computed for an unrelated LF source.
+        let crlf_sm = SourceMap::new("\r\n\r\nabc\r\n", 1);
+        let lf_sm = SourceMap::new("\n\nabc\n", 1);
+        assert_eq!(
+            line_ranges("\r\n\r\nabc\r\n"),
+            crlf_sm
+                .lines
+                .iter()
+                .map(|l| (l.start_byte, l.end_byte, l.end_line_size))
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(
+            lf_sm
+                .lines
+                .iter()
+                .map(|l| (l.start_byte, l.end_byte, l.end_line_size))
+                .collect::<Vec<_>>(),
+            vec![(0, 1, 1), (1, 2, 1), (2, 6, 1)]
+        );
+        let (lo, hi) = lf_sm.span_to_locations(2..5);
+        assert_eq!((lo.line, lo.char, lo.byte), (3, 0, 2));
+        assert_eq!((hi.line, hi.char, hi.byte), (3, 3, 5));
     }
 }

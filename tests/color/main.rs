@@ -3,6 +3,7 @@ mod ann_insertion;
 mod ann_multiline;
 mod ann_multiline2;
 mod ann_removed_nl;
+mod crlf_consecutive_empty_lines;
 mod ensure_emoji_highlight_width;
 mod first_snippet_is_primary;
 mod fold_ann_multiline;
