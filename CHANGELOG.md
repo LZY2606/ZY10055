@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 <!-- next-header -->
 ## [Unreleased] - ReleaseDate
 
+### Fixed
+
+- Fix annotations shifting a column or landing on the wrong line after consecutive blank CRLF lines. When a Windows-style file contained two or more empty `\r\n` lines in a row (for example at the start of the file), every annotation, multiline span, and suggestion on the following lines could render one column too early, attach to the wrong visual line, or panic on non-ASCII text. The line-splitting iterator special-cased an empty CRLF line that was immediately followed by another `\r\n` and reported its line ending as a 1-byte LF instead of a 2-byte CRLF, so every subsequent line's recorded start byte drifted out of sync with the real source bytes; since locations are derived from those per-line byte ranges, all later positions were corrupted (and an extra phantom empty line could be invented). The special case was removed so a line ending is classified purely by the byte preceding each `\n`. Existing coverage missed this because the CRLF tests only exercised a single `\r\n` line ending at a time, which never hit the misclassified branch; the bug required two adjacent empty CRLF lines.
+
 ## [0.12.16] - 2026-05-06
 
 ### Fixed

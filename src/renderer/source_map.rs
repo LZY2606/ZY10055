@@ -698,11 +698,7 @@ impl<'a> Iterator for CursorLines<'a> {
             self.0
                 .find('\n')
                 .map(|x| {
-                    let ret = if 0 < x
-                        && !(x == 1
-                            && self.0.as_bytes()[0] == b'\r'
-                            && self.0.as_bytes().get(2..4) == Some(b"\r\n"))
-                    {
+                    let ret = if 0 < x {
                         if self.0.as_bytes()[x - 1] == b'\r' {
                             (&self.0[..x - 1], EndLine::Crlf)
                         } else {
@@ -805,5 +801,124 @@ pub(crate) fn as_substr<'a>(
         } else {
             None
         }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::{CursorLines, EndLine, SourceMap};
+
+    fn split_lines(src: &str) -> Vec<(String, EndLine)> {
+        CursorLines::new(src)
+            .map(|(line, end)| (line.to_owned(), end))
+            .collect()
+    }
+
+    #[test]
+    fn cursor_lines_lf_and_single_crlf() {
+        assert_eq!(
+            split_lines("one\n\nthree"),
+            [
+                ("one".to_owned(), EndLine::Lf),
+                ("".to_owned(), EndLine::Lf),
+                ("three".to_owned(), EndLine::Eof),
+            ]
+        );
+        assert_eq!(
+            split_lines("one\r\nthree"),
+            [
+                ("one".to_owned(), EndLine::Crlf),
+                ("three".to_owned(), EndLine::Eof),
+            ]
+        );
+        assert_eq!(
+            split_lines("one\r\n\r\nthree"),
+            [
+                ("one".to_owned(), EndLine::Crlf),
+                ("".to_owned(), EndLine::Crlf),
+                ("three".to_owned(), EndLine::Eof),
+            ]
+        );
+    }
+
+    #[test]
+    fn cursor_lines_consecutive_crlf_blank_lines_at_start() {
+        // Built from explicit bytes so editors/git cannot rewrite the EOLs.
+        let source = "\r\n\r\nthird";
+        assert_eq!(source.as_bytes()[..5], *b"\r\n\r\nt");
+        assert_eq!(
+            split_lines(source),
+            [
+                ("".to_owned(), EndLine::Crlf),
+                ("".to_owned(), EndLine::Crlf),
+                ("third".to_owned(), EndLine::Eof),
+            ]
+        );
+    }
+
+    #[test]
+    fn cursor_lines_consecutive_crlf_blank_lines_in_middle() {
+        let source = "one\r\n\r\n\r\nfour";
+        assert_eq!(
+            split_lines(source),
+            [
+                ("one".to_owned(), EndLine::Crlf),
+                ("".to_owned(), EndLine::Crlf),
+                ("".to_owned(), EndLine::Crlf),
+                ("four".to_owned(), EndLine::Eof),
+            ]
+        );
+    }
+
+    #[test]
+    fn cursor_lines_consecutive_crlf_blank_lines_at_end() {
+        let source = "one\r\n\r\n\r\n";
+        assert_eq!(
+            split_lines(source),
+            [
+                ("one".to_owned(), EndLine::Crlf),
+                ("".to_owned(), EndLine::Crlf),
+                ("".to_owned(), EndLine::Crlf),
+            ]
+        );
+    }
+
+    #[test]
+    fn source_map_byte_ranges_after_crlf_blank_lines_at_start() {
+        let source = "\r\n\r\nthird";
+        let sm = SourceMap::new(source, 1);
+        let (lo, hi) = sm.span_to_locations(4..9);
+        assert_eq!((lo.line, lo.char, lo.display, lo.byte), (3, 0, 0, 4));
+        assert_eq!((hi.line, hi.char, hi.display, hi.byte), (3, 5, 5, 9));
+    }
+
+    #[test]
+    fn source_map_byte_ranges_after_crlf_blank_lines_in_middle() {
+        let source = "one\r\n\r\n\r\nfour";
+        let sm = SourceMap::new(source, 1);
+        // `four` starts at byte 9 on line 4.
+        let (lo, hi) = sm.span_to_locations(9..13);
+        assert_eq!((lo.line, lo.char, lo.display, lo.byte), (4, 0, 0, 9));
+        assert_eq!((hi.line, hi.char, hi.display, hi.byte), (4, 4, 4, 13));
+    }
+
+    #[test]
+    fn source_map_byte_ranges_after_crlf_blank_lines_at_end() {
+        let source = "one\r\n\r\n\r\n";
+        let sm = SourceMap::new(source, 1);
+        // The second trailing blank line starts at byte 7 on line 3.
+        let (lo, hi) = sm.span_to_locations(7..7);
+        assert_eq!((lo.line, lo.char, lo.display, lo.byte), (3, 0, 0, 7));
+        assert_eq!((hi.line, hi.char, hi.display, hi.byte), (3, 0, 0, 7));
+    }
+
+    #[test]
+    fn source_map_byte_ranges_non_ascii_after_crlf_blank_lines() {
+        let source = "\r\n\r\nこんにちは、世界";
+        let sm = SourceMap::new(source, 1);
+        // `世界` starts at byte 22 on line 3, after 6 double-width chars.
+        let (lo, hi) = sm.span_to_locations(22..28);
+        assert_eq!((lo.line, lo.char, lo.display, lo.byte), (3, 6, 12, 22));
+        assert_eq!((hi.line, hi.char, hi.display, hi.byte), (3, 8, 16, 28));
     }
 }
